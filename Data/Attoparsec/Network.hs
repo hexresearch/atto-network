@@ -31,7 +31,7 @@ data L4Header = L4Header { l4proto :: !ProtocolNumber
                          , l4src   :: !SockAddr
                          , l4dst   :: !SockAddr
                          }
-                deriving (Eq,Ord,Show)
+                deriving (Eq,Ord,Generic,Show)
 
 data L4Packet = Packet { l4hdr  :: L4Header
                        , l4data :: L4Payload
