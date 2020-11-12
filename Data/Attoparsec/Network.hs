@@ -68,6 +68,7 @@ skipEtherHeader = do
           0x0800 -> pure IPv4
           0x86DD -> pure IPv6
           0x8100 -> skipBytes 4 *> pure PktTypeOther
+          x      -> error (show x) -- pure PktTypeOther
 
   skipMAC
   skipMAC
