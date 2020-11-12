@@ -17,8 +17,6 @@ data L4Proto = TCP | UDP
                deriving (Eq,Ord,Data,Generic,Show)
 
 
-type ProtoNum = Int
-
 newtype L4Payload = L4Payload { l4unPayload :: ByteString }
                     deriving (Eq,Ord,Show)
 
@@ -29,7 +27,7 @@ instance Enum L4Proto where
   toEnum 17  = UDP
   toEnum 6   = TCP
 
-data L4Header = L4Header { l4proto :: !Int
+data L4Header = L4Header { l4proto :: !ProtocolNumber
                          , l4src   :: !SockAddr
                          , l4dst   :: !SockAddr
                          }
@@ -114,7 +112,7 @@ ipHdrAddrOnly IPv4 = do
   saddr            <- anyWord32le
   daddr            <- anyWord32le
   skipBytes optLen
-  pure $ L4Header { l4proto = proto
+  pure $ L4Header { l4proto = fromIntegral $ proto
                   , l4src   = (SockAddrInet 0 saddr)
                   , l4dst   = (SockAddrInet 0 daddr)
                   }
@@ -129,7 +127,7 @@ etherL4Packet = do
   parseL4 (l4proto hdr) hdr
 
   where
-    parseL4 :: ProtoNum -> L4Header -> Parser L4Packet
+    parseL4 :: ProtocolNumber -> L4Header -> Parser L4Packet
 
 -- struct udphdr {
 --   __be16	source;
@@ -138,7 +136,7 @@ etherL4Packet = do
 --   __sum16	check;
 -- };
 
-    parseL4 proto h | proto == fromEnum UDP = do
+    parseL4 proto h | (fromIntegral proto) == fromEnum UDP = do
       psrc <- anyWord16be
       pdst <- anyWord16be
       ulen <- anyWord16be
@@ -166,7 +164,7 @@ etherL4Packet = do
 --      __be16  urg_ptr;       2
 --  };
 
-    parseL4 proto h | proto == fromEnum TCP = do
+    parseL4 proto h | (fromIntegral proto) == fromEnum TCP = do
       psrc <- anyWord16be -- src_port    2
       pdst <- anyWord16be -- dst_port    4
       skipBytes 4         -- seq         8
