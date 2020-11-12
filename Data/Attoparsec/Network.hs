@@ -17,23 +17,27 @@ data L4Proto = TCP | UDP
                deriving (Eq,Ord,Data,Generic,Show)
 
 
+type ProtoNum = Int
+
 newtype L4Payload = L4Payload { l4unPayload :: ByteString }
                     deriving (Eq,Ord,Show)
 
 instance Enum L4Proto where
-  fromEnum TCP = 17
-  fromEnum UDP = 6
+  fromEnum TCP   = 6
+  fromEnum UDP   = 17
 
-  toEnum 6  = UDP
-  toEnum 17 = TCP
+  toEnum 17  = UDP
+  toEnum 6   = TCP
 
-data L4Header = L4Header { l4proto :: !(L4Proto)
+data L4Header = L4Header { l4proto :: !Int
                          , l4src   :: !SockAddr
                          , l4dst   :: !SockAddr
                          }
                 deriving (Eq,Ord,Show)
 
-data L4Packet = Packet L4Header L4Payload
+data L4Packet = Packet { l4hdr  :: L4Header
+                       , l4data :: L4Payload
+                       }
                 deriving (Eq,Ord,Show)
 
 etherAddrLen :: Int
@@ -62,19 +66,18 @@ skipMAC = A.take 6 *> pure ()
 
 skipEtherHeader :: Parser PacketType
 skipEtherHeader = do
+  skipMAC
+  skipMAC
+
   tpW <- anyWord16be
 
   tp <- case tpW of
           0x0800 -> pure IPv4
           0x86DD -> pure IPv6
           0x8100 -> skipBytes 4 *> pure PktTypeOther
-          x      -> error (show x) -- pure PktTypeOther
-
-  skipMAC
-  skipMAC
+          x      -> pure PktTypeOther
 
   return tp
-
 
 -- struct iphdr {
 --     __u8    ihl:4,
@@ -91,10 +94,10 @@ skipEtherHeader = do
 --     /*The options start here. */
 -- };
 
-skipIPv4HdrToAddress :: Parser (L4Proto, Int)
+skipIPv4HdrToAddress :: Parser (Int, Int)
 skipIPv4HdrToAddress = do
   v <- anyWord8
-  let ihl = v `shiftR` 4
+  let ihl = v .&. 0x0F
   tos     <- anyWord8
   totLen  <- anyWord16be
   id_     <- anyWord16be
@@ -108,8 +111,8 @@ ipHdrAddrOnly :: PacketType -> Parser L4Header
 
 ipHdrAddrOnly IPv4 = do
   (proto,optLen)   <- skipIPv4HdrToAddress
-  saddr            <- anyWord32be
-  daddr            <- anyWord32be
+  saddr            <- anyWord32le
+  daddr            <- anyWord32le
   skipBytes optLen
   pure $ L4Header { l4proto = proto
                   , l4src   = (SockAddrInet 0 saddr)
@@ -126,7 +129,7 @@ etherL4Packet = do
   parseL4 (l4proto hdr) hdr
 
   where
-    parseL4 :: L4Proto -> L4Header -> Parser L4Packet
+    parseL4 :: ProtoNum -> L4Header -> Parser L4Packet
 
 -- struct udphdr {
 --   __be16	source;
@@ -135,7 +138,7 @@ etherL4Packet = do
 --   __sum16	check;
 -- };
 
-    parseL4 UDP h = do
+    parseL4 proto h | proto == fromEnum UDP = do
       psrc <- anyWord16be
       pdst <- anyWord16be
       ulen <- anyWord16be
@@ -163,25 +166,29 @@ etherL4Packet = do
 --      __be16  urg_ptr;       2
 --  };
 
-    parseL4 TCP h = do
+    parseL4 proto h | proto == fromEnum TCP = do
       psrc <- anyWord16be -- src_port    2
       pdst <- anyWord16be -- dst_port    4
       skipBytes 4         -- seq         8
       skipBytes 4         -- ack_seq    12
       res0 <- anyWord8    -- res8       13
       skipBytes 1         -- res8       14
-      let tl = res0 `shiftR` 4
       skipBytes 2 -- window             16
       skipBytes 2 -- chk                18
       skipBytes 2 -- urg                20
+
+      let tl = res0 `shiftR` 4 -- .&. 0x0F
+      skipBytes (fromIntegral $ tl*4 - 20)
       pl   <- takeByteString
       pure $ mkPkt h psrc pdst pl
 
-    mkSa p h =
-      let (SockAddrInet _ a) = l4src h in SockAddrInet (fromIntegral p) a
+    parseL4 _ _ = fail "Only TCP and UDP protocols are supported so far"
+
+    mkSa f p h =
+      let (SockAddrInet _ a) = f h in SockAddrInet (fromIntegral p) a
 
     mkPkt :: L4Header -> Word16 -> Word16 -> ByteString -> L4Packet
     mkPkt h p1 p2 bs = Packet h' (L4Payload bs)
-      where h' = h { l4src = mkSa p1 h
-                   , l4dst = mkSa p2 h
+      where h' = h { l4src = mkSa l4src p1 h
+                   , l4dst = mkSa l4dst p2 h
                    }
